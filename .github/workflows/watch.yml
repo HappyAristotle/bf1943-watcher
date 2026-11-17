@@ -1,16 +1,49 @@
 name: Watch Coral Sea
+
 on:
   repository_dispatch:
-    types: [check_server]
-  workflow_dispatch:
+    types: [check_server]   # must match "event_type" sent by cron-job.org
+  workflow_dispatch:         # lets you run it manually from the Actions tab
+
+# Never run two checks at the same time (prevents double alerts / state races)
+concurrency:
+  group: coral-sea-watcher
+  cancel-in-progress: false
+
+permissions:
+  contents: read
 
 jobs:
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 3
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: pip install requests beautifulsoup4
-      - run: python check.py
+
+      - run: pip install --quiet requests beautifulsoup4
+
+      # Bring back last_alert.json from the previous run (the 7-minute cooldown needs it)
+      - name: Restore alert state
+        uses: actions/cache/restore@v4
+        with:
+          path: last_alert.json
+          key: alert-state-${{ github.run_id }}
+          restore-keys: alert-state-
+
+      - name: Check server
+        id: check
+        run: python check.py
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+
+      # Save the state only when an alert was actually sent
+      - name: Save alert state
+        if: steps.check.outputs.state_changed == 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: last_alert.json
+          key: alert-state-${{ github.run_id }}-${{ github.run_attempt }}
