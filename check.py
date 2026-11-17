@@ -6,43 +6,54 @@ import requests
 from bs4 import BeautifulSoup
 
 TARGET_URL = "https://bf1943.tekrantgaming.com/servers"
-NTFY_TOPIC = "bf1943_coralsea_XXXX"  # <-- ודא שזה שם הערוץ שלך!
+# שם הערוץ נלקח מ-GitHub Secret בשם NTFY_TOPIC (לא נשמר בקוד הציבורי)
+NTFY_TOPIC = os.environ.get("NTFY_TOPIC", "").strip()
 TARGET_MAP = "coral sea"
-MIN_PLAYERS = 2
-COOLDOWN_SECONDS = 420  # בדיוק 7 דקות (7 * 60)
+MIN_PLAYERS = 2          # התראה רק כשיש יותר מ-2 שחקנים (כלומר 3 ומעלה)
+COOLDOWN_SECONDS = 420   # 7 דקות
 STATE_FILE = "last_alert.json"
 
+
 def load_last_alert_time():
-    if os.path.exists(STATE_FILE):
-        try:
-            with open(STATE_FILE, "r") as f:
-                data = json.load(f)
-                return data.get("timestamp", 0)
-        except:
-            pass
-    return 0
+    try:
+        with open(STATE_FILE, "r") as f:
+            return float(json.load(f).get("timestamp", 0))
+    except (OSError, ValueError, AttributeError):
+        return 0.0
+
 
 def save_last_alert_time(timestamp):
-    try:
-        with open(STATE_FILE, "w") as f:
-            json.dump({"timestamp": timestamp}, f)
-    except:
-        pass
+    with open(STATE_FILE, "w") as f:
+        json.dump({"timestamp": timestamp}, f)
+    # מסמן ל-workflow לשמור את הקובץ ב-cache לריצה הבאה
+    gh_output = os.environ.get("GITHUB_OUTPUT")
+    if gh_output:
+        with open(gh_output, "a") as f:
+            f.write("state_changed=true\n")
+
 
 def send_phone_notification(server_name, players):
-    requests.post(
-        f"https://ntfy.sh/{NTFY_TOPIC}",
-        data=f"בשרת {server_name} יש כרגע {players} שחקנים!".encode("utf-8"),
-        headers={
-            "Title": "Coral Sea פעילה עכשיו!".encode("utf-8"),
-            "Priority": "high",
-            "Tags": "video_game,rotating_light"
+    # פרסום בפורמט JSON - בטוח לעברית (כותרות HTTP לא תומכות היטב בתווים שאינם ASCII)
+    resp = requests.post(
+        "https://ntfy.sh/",
+        json={
+            "topic": NTFY_TOPIC,
+            "title": "Coral Sea פעילה עכשיו!",
+            "message": f"בשרת {server_name} יש כרגע {players} שחקנים!",
+            "priority": 4,  # high
+            "tags": ["video_game", "rotating_light"],
         },
-        timeout=10
+        timeout=10,
     )
+    resp.raise_for_status()
 
-def main():
-    resp = requests.get(TARGET_URL, timeout=15)
+
+def fetch_servers():
+    resp = requests.get(
+        TARGET_URL,
+        timeout=15,
+        headers={"User-Agent": "Mozilla/5.0 (bf1943-watcher)"},
+    )
     resp.raise_for_status()
     content_type = resp.headers.get("Content-Type", "")
 
@@ -63,25 +74,34 @@ def main():
                 match = re.search(r"(\d+)\s*/\s*\d+", text)
                 if match:
                     servers.append((text[:40], "Coral Sea", int(match.group(1))))
+    return servers
 
-    active_server_found = False
+
+def main():
+    if not NTFY_TOPIC:
+        raise SystemExit("NTFY_TOPIC secret is missing - add it in GitHub repo Settings > Secrets > Actions")
+
+    servers = fetch_servers()
+    print(f"Parsed {len(servers)} server entries: {servers}")
+    if not servers:
+        print("WARNING: no servers parsed - the page layout may have changed or is rendered by JavaScript.")
+
     now = time.time()
     last_alert = load_last_alert_time()
 
     for name, map_name, players in servers:
         if TARGET_MAP in map_name.lower() and players > MIN_PLAYERS:
-            active_server_found = True
             if now - last_alert > COOLDOWN_SECONDS:
                 send_phone_notification(name, players)
                 save_last_alert_time(now)
                 print(f"Sent alert for {name} ({players} players)")
             else:
-                print(f"Server is active, but within 7-minute cooldown.")
-            break
+                left = int(COOLDOWN_SECONDS - (now - last_alert))
+                print(f"Server is active, but within cooldown ({left}s left).")
+            return
 
-    # איפוס הזיכרון כשהשרת מתרוקן, כדי שברגע שיאוכלס שוב תקבל התראה מיידית
-    if not active_server_found and (now - last_alert > COOLDOWN_SECONDS * 2):
-        save_last_alert_time(0)
+    print("Coral Sea not active right now.")
+
 
 if __name__ == "__main__":
     main()
