@@ -24,10 +24,6 @@ rules:
     when: both
     min_players: 3
 
-  # --- זמני, לבדיקה שההתראות מגיעות. למחוק אחרי הבדיקה ---
-  - map: Iwo Jima
-    when: both
-    min_players: 3
 
 settings:
   # אחרי התראה, אותה התראה (אותו שרת + אותה מפה + אותו סוג) לא תישלח שוב
