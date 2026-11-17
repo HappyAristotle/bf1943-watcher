@@ -1,7 +1,7 @@
 name: Watch Coral Sea
 on:
-  schedule:
-    - cron: '*/5 * * * *'
+  repository_dispatch:
+    types: [check_server]
   workflow_dispatch:
 
 jobs:
