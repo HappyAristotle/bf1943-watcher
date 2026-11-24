@@ -22,7 +22,7 @@
 rules:
   - map: Coral Sea
     when: both
-    min_players: 3
+    min_players: 1
 
 
 settings:
